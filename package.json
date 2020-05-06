@@ -1,0 +1,14 @@
+{
+	"name": "CEMS-preshift-notification-bot",
+	"version": "1.0.0",
+	"description": "Sends out the preshift notifications",
+	"main": "index.js",
+	"author": "William Liang Wang",
+	"dependencies": {
+		"airtable": "^0.8.1",
+		"aws-xray-sdk": "^2.5.0",
+		"discord.js": "^12.0.2",
+		"googleapis": "^50.0.0",
+		"moment-timezone": "^0.5.28"
+	}
+}
