@@ -34,7 +34,7 @@ const TOKEN_PATH = 'token.json';
 fs.readFile('credentials.json', async (err, content) => {
     if (err) return console.log('Error 0 loading client secret file:', err);
     // Authorize a client with credentials, then call the Google Sheets API.
-    var vals = await authorize(JSON.parse(content), getShifts);
+    var [rows, announces, shifts] = await authorize(JSON.parse(content), getShifts);
     // authorize(JSON.parse(content), updateSheets.bind(null, rows))
 });
 
@@ -131,13 +131,14 @@ async function getShifts(auth) {
     });
     var rows = data.data.values;
     if (rows.length) {
-        console.log('Got rows');
+        console.log('Got data!');
         // Apply processShiftRow to each row
         rows.map((row) => processShiftRow(row, announces, shifts));
     } else {
         console.log('No data found.');
     }
-    console.log(JSON.stringify([rows, announces, shifts]))
+    console.log("Announces", JSON.stringify(announces))
+    console.log("Shifts", JSON.stringify(shifts))
     return [rows, announces, shifts]
 }
 
@@ -201,32 +202,19 @@ async function authorize(credentials, callback) {
         client_id, client_secret, redirect_uris[0]);
 
     // Check if we have previously stored a token.
-    fsp.readFile(TOKEN_PATH)
+    await fsp.readFile(TOKEN_PATH)
         .then(token => {
             oAuth2Client.setCredentials(JSON.parse(token));
         })
         .catch(err => {
-            // uncomment next 2 lines to get a new token file on Token error
-            // await getNewToken(oAuth2Client);
-            // resolve();
-            console.log(`Token error, reconfigure manually on desktop`)
-            reject(`Token error, reconfigure manually on desktop`);
+            // error out; use fix_token.js to get new token file
+            const msg = `Token error, reconfigure manually on desktop using fix_token.js`
+            console.log(msg)
+            throw msg
         });
-    // await new Promise((resolve, reject) => {
-    //     fs.readFile(TOKEN_PATH, (err, token) => {
-    //         if (err) {
-    //             // uncomment next 2 lines to get a new token file on Token error
-    //             // await getNewToken(oAuth2Client);
-    //             // resolve();
-    //             console.log(`Token error, reconfigure manually on desktop`)
-    //             reject(`Token error, reconfigure manually on desktop`);
-    //         }
-    //         oAuth2Client.setCredentials(JSON.parse(token));
-    //         resolve();
-    //     });
-    // });
+    console.log("-------- calling authorized function: ", callback.name, " --------")
     result = await callback(oAuth2Client)
-    console.log("done with authorized function: ", callback.name)
+    console.log("-------- completed authorized function: ", callback.name, " --------")
     return result
 }
 
