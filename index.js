@@ -217,37 +217,3 @@ async function authorize(credentials, callback) {
     console.log("-------- completed authorized function: ", callback.name, " --------")
     return result
 }
-
-/**
- * Get and store new token after prompting for user authorization, and then
- * execute the given callback with the authorized OAuth2 client.
- * @param {google.auth.OAuth2} oAuth2Client The OAuth2 client to get token for.
- * @param {getEventsCallback} callback The callback for the authorized client.
- */
-async function getNewToken(oAuth2Client) {
-    const authUrl = oAuth2Client.generateAuthUrl({
-        access_type: 'offline',
-        scope: SCOPES,
-    });
-    console.log('Authorize this app by visiting this url:', authUrl);
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-    });
-    rl.question('Enter the code from that page here: ', async (code) => {
-        rl.close();
-        try {
-            const token = await oAuth2Client.getToken(code)
-            oAuth2Client.setCredentials(token);
-            console.log('Got new token, now storing...')
-            // Store the token to disk for later program executions
-            await fsp.writeFile(TOKEN_PATH, JSON.stringify(token))
-            console.log('Token stored to', TOKEN_PATH);
-            return
-        } catch (err) {
-            console.error('Error while trying to retrieve or store access token');
-            throw err
-        }
-    });
-}
-
