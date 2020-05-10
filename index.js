@@ -24,8 +24,8 @@ const live_mode = false;
 const real_time = false;
 const time_check = false;
 const day_check = false;
-const send_msgs = true;
-const modify_sheets = true;
+const send_msgs = false;
+const modify_sheets = false;
 
 const first_test_date = moment("9/5/2019", "MM/DD/YYYY");
 const last_test_date = moment("9/14/2019", "MM/DD/YYYY");
@@ -39,8 +39,8 @@ const TOKEN_PATH = 'token.json';
 // /AWS Lambda trigger handler
 exports.handler = async (event, content) => {
     // instance context
-    let first_date = real_time ? first_test_date : moment().add(7, 'day').startOf('date');
-    let last_date = real_time ? last_test_date : moment().add(13, 'day').startOf('date');
+    let first_date = real_time ? moment().add(7, 'day').startOf('date') : first_test_date;
+    let last_date = real_time ? moment().add(13, 'day').startOf('date') : last_test_date;
     const context = {
         start : first_date,
         end : last_date,
@@ -137,8 +137,13 @@ exports.handler = async (event, content) => {
 
         // announce new shifts
         if (!day_check || status["correct_day"]) {
-            const message_promises = shift_msgs.map(message => r3_channel.send(message));
-            await Promise.all(message_promises);
+            await r3_channel.send(shift_msgs.shift());
+            if (!shift_msgs.length) {
+                await r3_channel.send("All shifts next week have been assigned!");
+            } else {
+                const message_promises = shift_msgs.map(message => r3_channel.send(message));
+                await Promise.all(message_promises);
+            }
             console.log("Shifts sent");
         } else {
             console.log("Date check failed, no shifts sent");
