@@ -47,6 +47,8 @@ function authorize(credentials, callback) {
 /**
  * Get and store new token after prompting for user authorization, and then
  * execute the given callback with the authorized OAuth2 client.
+ * Note: offline access_type generates a refresh token 
+ * (ie. doesn't require future interaction; this is good)
  * @param {google.auth.OAuth2} oAuth2Client The OAuth2 client to get token for.
  * @param {getEventsCallback} callback The callback for the authorized client.
  */
@@ -76,8 +78,7 @@ function getNewToken(oAuth2Client, callback) {
 }
 
 /**
- * Prints the names and majors of students in a sample spreadsheet:
- * @see https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit
+ * Gets all the shifts in the spreadsheet.
  * @param {google.auth.OAuth2} auth The authenticated Google OAuth client.
  */
 function getShifts(auth) {

@@ -14,100 +14,152 @@ const util = require('util');
 const readline = require('readline');
 
 // Switches app functionality
-// live mode false sends to bot-test channel
-// test_time false allows you to set custom time range in code
-// time_check false allows bot to run at any time (ie. not just 6:30 pm eastern)
-// send_msgs false prevents message sending
+// live mode false: sends to bot-test channel
+// real_time false: utilizes custom time
+// time_check false: forces shift confirmation processing (ie. not just 6:30pm est)
+// day_check false: forces new shift announcements processing (ie. not just on Sundays) 
+// send_msgs false: prevents message sending
+// modify_sheets false: prevents modification of google sheet
 const live_mode = false;
-const test_time = false;
+const real_time = false;
 const time_check = false;
+const day_check = false;
 const send_msgs = true;
+const modify_sheets = true;
 
-// Modify google sheets authentication / project here: https://console.developers.google.com/
-// If modifying these scopes, delete token.json.
-const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
+const first_test_date = moment("9/5/2019", "MM/DD/YYYY");
+const last_test_date = moment("9/14/2019", "MM/DD/YYYY");
+
 // The file token.json stores the user's access and refresh tokens, and is
 // created automatically when the authorization flow completes for the first time.
+// If broken, troubleshoot with `fix_token.js`
 const TOKEN_PATH = 'token.json';
 
 
 // /AWS Lambda trigger handler
-exports.handler = async (event, context) => {
+exports.handler = async (event, content) => {
+    // instance context
+    let first_date = real_time ? first_test_date : moment().add(7, 'day').startOf('date');
+    let last_date = real_time ? last_test_date : moment().add(13, 'day').startOf('date');
+    const context = {
+        start : first_date,
+        end : last_date,
+        live_mode : live_mode,
+        real_time : real_time,
+        time_check : time_check,
+        day_check : day_check,
+        send_msgs : send_msgs,
+        modify_sheets : modify_sheets,
+    };
+    console.log(context);
+
     // initial status
     let status = {
-        utc_timestamp : moment().format(),
-        et_timestamp : moment.tz("America/New_York").format(),
-        correct_time : moment.tz("America/New_York").hours() == 18,
-        correct_day : moment.tz("America/New_York").weekday() == 0,
-        live_mode : live_mode,
-        time_check : time_check,
-        send_msgs : send_msgs,
+        et_timestamp : moment.tz('America/New_York').format(),
+        correct_time : moment.tz('America/New_York').hours() == 18,
+        correct_day : moment.tz('America/New_York').weekday() == 0,
+        confirms : [],
+        shifts : [],
+        confirms_msgs : [],
+        shift_msgs : [],
     };
 
     // Since there are two triggers one for EST and another for EDT
-    if (time_check && !status["correct_time"]) {
-        console.log(status, "\n");
+    if (time_check && !status['correct_time']) {
+        console.log("Time check failed. Returning");
+        console.log(status);
         return status;
     }
 
+    console.log("Starting Discord client")
     const client = new Discord.Client();
     client.login(auth.discord_token);    
-    const readyPromise = new Promise(resolve => client.on("ready", resolve));
+    const readyPromise = new Promise(resolve => client.on('ready', resolve));
 
     // query sheets for shift infos and dtags
     // Load client secrets from a local file.
-    console.log("loading credentials")
+    console.log("Loading credentials")
     credentials = JSON.parse(await fsp.readFile('credentials.json'));
     
-    const dtags_promise = authorize(credentials, getDTags);
-    let [rows, announces, shifts] = await authorize(credentials, getShifts);
-    const dtags = await dtags_promise;
+    const dtagsPromise = authorize(credentials, getDTags);
+    let rows = await authorize(credentials, getShifts);
 
-    status["announces"] = announces;
-    status["shifts"] = shifts;
-    
-    // get discord channel info
-    await readyPromise;
-    const guild = await client.guilds.cache.find(g => g.id == auth.server);
-    console.log(client.guilds.cache.map(g => g.id))
-    let r3_channel;
-    console.log(guild.channels.cache.map(c => c.name))
-    if (guild && guild.channels.cache.find(ch => ch.name === auth.channel)){
-        r3_channel = guild.channels.cache.find(ch => ch.name === auth.channel);
+    // process rows
+    let confirms = [];
+    let shifts = []; 
+    if (rows.length) {
+        console.log('Got shift data');
+        rows.forEach(row => processShiftRow(row, confirms, shifts, context));
+        status['confirms'] = confirms;
+        status['shifts'] = shifts;
     } else {
+        console.log("No shift data found, returning");
+        console.log(status);
+        await readyPromise;
+        await dtagsPromise;
         await client.destroy();
-        throw `Crimson EMS server or third-riders channel not found`;
+        return status;
     }
-    r3_channel = live_mode ? r3_channel : guild.channels.cache.find(ch => ch.name === 'test-bot');
+
+    // await discord tags
+    const dtags = await dtagsPromise;
+    
+    // get discord info
+    await readyPromise;
+    console.log("Discord ready");
+    const guild = client.guilds.cache.find(g => g.id == auth.server);
+    if (!guild) {
+        await client.destroy();
+        throw `${auth.server} server not found`;
+    }
+    const channelName = live_mode ? 'third-riders' : 'test-bot';
+    const r3_channel = guild.channels.cache.find(ch => ch.name == channelName);
+    if (!r3_channel) {
+        await client.destroy();
+        throw `${ch} channel not found`;
+    }
 
     // generate messages
-    const announces_msgs = genConfMsg(announces, dtags, guild.members);
-    status["announces_msgs"] = announces_msgs;
-    const shift_msgs = genShiftMsg(shifts);
+    console.log("Generating messages");
+    const confirms_msgs = genConfMsg(confirms, dtags, guild.members);
+    status["confirms_msgs"] = confirms_msgs;
+
+    const shift_msgs = genShiftMsg(shifts, context);
     status["shift_msgs"] = shift_msgs;
 
-    // announce confirmations
-    if (!time_check || status["correct_time"]) {
-        if (send_msgs) {
-            const message_promises = announces_msgs.map(message => r3_channel.send(message));
-            await Promise.all(message_promises);
-        }
-    }
+    // send messages
+    if (send_msgs) {
+        console.log("Sending messages");
+        // announce confirmations
+        const message_promises = confirms_msgs.map(message => r3_channel.send(message));
+        await Promise.all(message_promises);
+        console.log("Confirmations sent");
 
-    // announce new shifts
-    if (!time_check || (status["correct_day"] && status["correct_time"])) {
-        if (send_msgs) {
+        // announce new shifts
+        if (!day_check || status["correct_day"]) {
             const message_promises = shift_msgs.map(message => r3_channel.send(message));
             await Promise.all(message_promises);
+            console.log("Shifts sent");
+        } else {
+            console.log("Date check failed, no shifts sent");
         }
+    } else {
+        console.log("Not sending messages");
     }
-    
-    // update sheets with announced confirmations
-    await authorize(credentials, (auth) => updateSheets(auth, rows))
-    // destroy the bot cleanly
-    await client.destroy()
 
-    console.log(status, "\n")
+    // update sheets with announced confirmations
+    if (modify_sheets) {
+        await authorize(credentials, auth => updateSheets(auth, rows));
+        console.log("Sheets modified");
+    } else {
+        console.log("No sheet modifications");
+    }
+    // destroy the bot cleanly
+    console.log("Destroying client");
+    await client.destroy();
+    console.log("Client destroyed");
+
+    console.log(status);
     return status;
 };
 
@@ -121,64 +173,53 @@ const COLS = {
     R1 : 5,
     R2 : 6,
     approval : 7,
-    a_announce: 11,
+    announced: 11,
+};
+
+/**
+ * Gets all the shifts in the spreadsheet.
+ * @param {google.auth.OAuth2} auth The authenticated Google OAuth client.
+ */
+async function getShifts(auth) {   
+    const sheets = google.sheets({version: 'v4', auth});
+    const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: '1mQsQPMe3-hJ-8uZlIouyCQDuheckdrAjr5nIzEcwSdA',
+        range: 'Current!A3:L',
+    }).catch(err => { throw err });
+    return response.data.values;
 }
 
 /**
- * Gets shifts for the next week:
- * @see https://docs.google.com/spreadsheets/d/1VypH0mPj5ejgHWyEr8gZFqebjjfYY0q1VbVUA2KyXd8/edit#gid=1700042039
- * @param {google.auth.OAuth2} auth The authenticated Google OAuth client.
+ * Processes a row of the spreadsheet. Modifies row, confirmations, and shifts in place
+ * @param {list} row A list representing A row from the sheet.
+ * @param {list} confirms A list of confirmations to be appended to.
+ * @param {list} shifts A list of shifts to be appended to.
+ * @param {object} context A context object containing start/end dates
  */
-async function getShifts(auth) {
-    var announces = [];
-    var shifts = [];    
-    const sheets = google.sheets({version: 'v4', auth});
-    var data = await sheets.spreadsheets.values.get({
-        spreadsheetId: '1mQsQPMe3-hJ-8uZlIouyCQDuheckdrAjr5nIzEcwSdA',
-        range: 'Current!A3:L',
-    });
-    var rows = data.data.values;
-    if (rows.length) {
-        console.log('Got shift data!');
-        // Apply processShiftRow to each row
-        rows.forEach(row => processShiftRow(row, announces, shifts));
-    } else {
-        console.log('No shift data found.');
-    }
-    console.log("Announces", JSON.stringify(announces))
-    console.log("Shifts", JSON.stringify(shifts))
-    return [rows, announces, shifts]
-}
-
-
-function processShiftRow(row, announces, shifts) {
+function processShiftRow(row, confirms, shifts, context) {
     // check if shift was already announced
-    if (row[COLS["a_announce"]] === 'Yes!') return;
+    if (row[COLS["announced"]] === 'Yes!') return;
 
-    let first_date = moment().add(7, "day").startOf('date');
-    let last_date = moment().add(13, "day").startOf('date');
+    // extend row to have correct number of columns
+    while (row.length <= COLS['announced']) { row.push('') };
 
-    first_date = moment("9/5/2019", "MM/DD/YYYY");
-    last_date = moment("9/14/2019", "MM/DD/YYYY");
-
-    while (row.length <= COLS['a_announce']) {row.push('')};
-
-    if (row[COLS["approval"]] !== '') {
+    if (row[COLS["approval"]] != '') {
         // check if there is an approved R3
-        row[COLS["a_announce"]] = 'Yes!';
-        announces.push(row);
+        row[COLS["announced"]] = 'Yes!';
+        confirms.push(row);
     } else {
         // check shift in date range and has a R1 on it
-        var shift_date = moment(row[COLS["date"]], "MM/DD/YYYY").startOf('date')
-        var R1 = row[COLS["R1"]]
-        if (first_date <= shift_date && shift_date <= last_date && R1 !== '') {
-            shifts.push(row)
-        }
+        const shiftDate = moment(row[COLS["date"]], "MM/DD/YYYY").startOf('date');
+        const checkDate = date => (context["start"] <= date && date <= context["end"]);
+        if (checkDate(shiftDate) && row[COLS["R1"]] !== '') shifts.push(row);
     }
-    return
+    return;
 }
 
-
+/**
+ * Gets all the Discord tags in the spreadsheet.
+ * @param {google.auth.OAuth2} auth The authenticated Google OAuth client.
+ */
 async function getDTags(auth) {
     let dtags = {}
     const sheets = google.sheets({version: 'v4', auth});
@@ -189,25 +230,24 @@ async function getDTags(auth) {
     let rows = data.data.values;
     if (rows.length) {
         console.log('Got dtag data!');
-        // Apply processShiftRow to each row
-        rows.forEach((row) => dtags[row[0]] = row[1]);
+        rows.forEach(row => dtags[row[0]] = row[1]);
     } else {
         console.log('No dtag data found.');
     }
-    console.log("DTAG CHECK", dtags["Nina Uzoigwe"])
     return dtags
 }
 
-
+/**
+ * Updates the "announced" column of the spreadsheet
+ * @param {google.auth.OAuth2} auth The authenticated Google OAuth client.
+ * @param {list} rows 2D list containing the entire updated spreadsheet
+ */
 function updateSheets(auth, rows) {
-    console.log(rows)
-    rows = Array.prototype.slice.call(rows);
-    console.log("UPDATING SHEETS")
-    console.log(JSON.stringify(rows))
-    announces = rows.map((row) => [row[COLS["a_announce"]]])
-    console.log(JSON.stringify(announces))
+    // Get just the "announced" column
+    // rows = Array.prototype.slice.call(rows);
+    const announces = rows.map(row => [row[COLS["announced"]]])
     const sheets = google.sheets({version: 'v4', auth});
-    sheets.spreadsheets.values.update({
+    return sheets.spreadsheets.values.update({
         spreadsheetId: '1mQsQPMe3-hJ-8uZlIouyCQDuheckdrAjr5nIzEcwSdA',
         range: 'Current!L3:L',
         valueInputOption: 'USER_ENTERED',
@@ -215,22 +255,24 @@ function updateSheets(auth, rows) {
         resource: {
             values: announces,
         }
-    }, (err, res) => {
-        if (err) return console.log('updateSheets returned an error: ' + err);
-    });    
+    }).catch(err => { throw err });
 }
 
-// Code below this point is pretty much copied from google sheets API quickstart
 /**
  * Create an OAuth2 client with the given credentials, and then execute the
- * given callback function.
+ * given callback function. Unlike sheets quickstart, this doesn't allow user to
+ * manually input a code to generate a new token. 'fix_token.js' should be used to
+ * fix 'token.json'
  * @param {Object} credentials The authorization client credentials.
  * @param {function} callback The callback to call with the authorized client.
+ *                   The callback should return a promise
+ * @return {see callback} returns result of resolved callback promise
  */
 async function authorize(credentials, callback) {
     const {client_secret, client_id, redirect_uris} = credentials.installed;
     const oAuth2Client = new google.auth.OAuth2(
-        client_id, client_secret, redirect_uris[0]);
+        client_id, client_secret, redirect_uris[0]
+    );
 
     // Check if we have previously stored a token.
     await fsp.readFile(TOKEN_PATH)
@@ -239,27 +281,28 @@ async function authorize(credentials, callback) {
         })
         .catch(err => {
             // error out; use fix_token.js to get new token file
-            const msg = `Token error, reconfigure manually on desktop using fix_token.js`
-            console.log(msg)
-            throw msg
+            const msg = `Token error, reconfigure manually on desktop using fix_token.js`;
+            console.log(msg);
+            throw msg;
         });
-    console.log("-------- calling authorized function: ", callback.name, " --------")
-    result = await callback(oAuth2Client)
-    console.log("-------- completed authorized function: ", callback.name, " --------")
-    return result
+    console.log("-------- calling authorized function: ", callback.name, " --------");
+    result = await callback(oAuth2Client);
+    console.log("-------- completed authorized function: ", callback.name, " --------");
+    return result;
 }
 
-
-function genShiftMsg(shifts) {
+/**
+ * Generates message for shifts to announce
+ * @param {list} shifts The list of available shifts to announce
+ * @param {object} context A context object containing start/end dates
+ */
+function genShiftMsg(shifts, context) {
     let messages = [];
     
-    let first_date = moment().add(7, "day").startOf('date');
-    let last_date = moment().add(13, "day").startOf('date');
-    let time_msg = `\`\`\`ini\n[3R Shift Openings for ${first_date.format('LL')} - ${last_date.format('LL')}!!!]\`\`\``;
+    let time_msg = `\`\`\`ini\n[3R Shift Openings for ${context["start"].format('LL')} - ${context["end"].format('LL')}!!!]\`\`\``;
     messages.push(time_msg);
 
     shifts.forEach(shift => {
-        console.log(shift)
         let date = shift[COLS['date']].concat(" ", shift[COLS['time']]);
         let msg = `**Name:** ${shift[COLS['name']]}    **Date:** ${date}    **Location:** ${shift[COLS['location']]}`;
         messages.push(msg);
@@ -267,21 +310,20 @@ function genShiftMsg(shifts) {
     return messages;
 }
 
-
-function genConfMsg(announces, dtags, guild_members) {
+/**
+ * Generates message for shifts to announce
+ * @param {list} confirms The list of confirmations to announce
+ * @param {object} dtags The dictionary for member keys to discord tag valuesF
+ * @param {Discord.js guildMemberManager} guild_members The Discord.js object for managing guild members
+ */
+function genConfMsg(confirms, dtags, guild_members) {
     let messages = [];
     const get_member = dtag => guild_members.cache.find(member => member.user.tag.toLowerCase() == dtag.toLowerCase());
-    console.log(get_member("void#8168"))
-    console.log(guild_members.cache.map(member => member.user.tag.toLowerCase()))
-    announces.forEach(shift => {
+    confirms.forEach(shift => {
         let date = shift[COLS['date']].concat(" ", shift[COLS['time']]);
-        let dtag = dtags[shift[COLS["approval"]]] ? dtags[shift[COLS["approval"]]] : shift[COLS["approval"]]
-        console.log("DTAG CHECK0 ---------- ", dtag)
+        let dtag = dtags[shift[COLS["approval"]]] ? dtags[shift[COLS["approval"]]] : shift[COLS["approval"]];
         dtag = dtag ? get_member(dtag) : dtags[shift[COLS["approval"]]];
-        console.log("DTAG CHECK1 ---------- ", dtag)
         dtag = dtag ? dtag : shift[COLS["approval"]];
-        console.log("DTAG CHECK2 ---------- ", dtag)
-        console.log("CHECK3 ---------- ", shift[COLS["approval"]])
         let msg = `${dtag} you are confirmed for ${shift[COLS["name"]]} at ${shift[COLS["location"]]} `+
         `on ${date} with ${shift[COLS["R1"]]} and ${shift[COLS["R2"]]}!`;
         messages.push(msg);
