@@ -31,7 +31,7 @@ const last_test_date = moment("9/21/2019", "MM/DD/YYYY");
 
 // The file token.json stores the user's access and refresh tokens, and is
 // created automatically when the authorization flow completes for the first time.
-// If broken, troubleshoot with `fix_token.js`
+// If broken, troubleshoot with `token_fix.js`
 const TOKEN_PATH = 'token.json';
 
 
@@ -261,7 +261,7 @@ async function updateSheets(auth, rows) {
 /**
  * Create an OAuth2 client with the given credentials, and then execute the
  * given callback function. Unlike sheets quickstart, this doesn't allow user to
- * manually input a code to generate a new token. 'fix_token.js' should be used to
+ * manually input a code to generate a new token. 'token_fix.js' should be used to
  * fix 'token.json'
  * @param {Object} credentials The authorization client credentials.
  * @param {function} callback The callback to call with the authorized client.
@@ -279,8 +279,8 @@ async function authorize(credentials, callback) {
             oAuth2Client.setCredentials(JSON.parse(token));
         })
         .catch(err => {
-            // error out; use fix_token.js to get new token file
-            const msg = `Token error, reconfigure manually on desktop using fix_token.js`;
+            // error out; use token_fix.js to get new token file
+            const msg = `Token error, reconfigure manually on desktop using token_fix.js`;
             console.log(msg);
             throw msg;
         });
