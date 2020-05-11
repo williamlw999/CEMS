@@ -27,7 +27,7 @@ const send_msgs = false;
 const modify_sheets = false;
 
 const first_test_date = moment("9/5/2019", "MM/DD/YYYY");
-const last_test_date = moment("9/14/2019", "MM/DD/YYYY");
+const last_test_date = moment("9/21/2019", "MM/DD/YYYY");
 
 // The file token.json stores the user's access and refresh tokens, and is
 // created automatically when the authorization flow completes for the first time.
@@ -53,10 +53,11 @@ exports.handler = async (event, content) => {
     console.log(context);
 
     // initial status
+    const now = moment.tz('America/New_York');
     let status = {
-        et_timestamp : moment.tz('America/New_York').format(),
-        correct_time : moment.tz('America/New_York').hours() == 18,
-        correct_day : moment.tz('America/New_York').weekday() == 0,
+        et_timestamp : now.format(),
+        correct_time : now.hours() == 18 && now.minutes() == 29,
+        correct_day : now.weekday() == 1, // CHANGE BACK TO 0 AFTER TEST
         confirms : [],
         shifts : [],
         confirms_msgs : [],
@@ -70,18 +71,19 @@ exports.handler = async (event, content) => {
         return status;
     }
 
-    console.log("Starting Discord client")
+    console.log("Starting Discord client");
     const client = new Discord.Client();
     client.login(auth.discord_token);    
     const readyPromise = new Promise(resolve => client.on('ready', resolve));
 
     // query sheets for shift infos and dtags
     // Load client secrets from a local file.
-    console.log("Loading credentials")
+    console.log("Loading credentials");
     credentials = JSON.parse(await fsp.readFile('credentials.json'));
     
     const dtagsPromise = authorize(credentials, getDTags);
     let rows = await authorize(credentials, getShifts);
+    console.log("got shifts");
 
     // process rows
     let confirms = [];
@@ -102,6 +104,7 @@ exports.handler = async (event, content) => {
 
     // await discord tags
     const dtags = await dtagsPromise;
+    console.log("got Discord tags");
     
     // get discord info
     await readyPromise;
@@ -151,9 +154,7 @@ exports.handler = async (event, content) => {
     if (modify_sheets) {
         await authorize(credentials, auth => updateSheets(auth, rows));
         console.log("Sheets modified");
-    } else {
-        console.log("No sheet modifications");
-    }
+    } else { console.log("No sheet modifications"); }
     // destroy the bot cleanly
     console.log("Destroying client");
     await client.destroy();
@@ -198,7 +199,7 @@ async function getShifts(auth) {
  */
 function processShiftRow(row, confirms, shifts, context) {
     // check if shift was already announced
-    if (row[COLS["announced"]] === 'Yes!') return;
+    if (row[COLS["announced"]] === 'Yes!') { return };
 
     // extend row to have correct number of columns
     while (row.length <= COLS['announced']) { row.push('') };
@@ -213,7 +214,7 @@ function processShiftRow(row, confirms, shifts, context) {
         const checkDate = date => (context["start"] <= date && date <= context["end"]);
         if (checkDate(shiftDate) && row[COLS["R1"]] !== '') shifts.push(row);
     }
-    return;
+    return ;
 }
 
 /**
@@ -221,7 +222,7 @@ function processShiftRow(row, confirms, shifts, context) {
  * @param {google.auth.OAuth2} auth The authenticated Google OAuth client.
  */
 async function getDTags(auth) {
-    let dtags = {}
+    let dtags = {};
     const sheets = google.sheets({version: 'v4', auth});
     let data = await sheets.spreadsheets.values.get({
         spreadsheetId: '1mQsQPMe3-hJ-8uZlIouyCQDuheckdrAjr5nIzEcwSdA',
@@ -230,11 +231,9 @@ async function getDTags(auth) {
     let rows = data.data.values;
     if (rows.length) {
         console.log('Got dtag data!');
-        rows.forEach(row => dtags[row[0]] = row[1]);
-    } else {
-        console.log('No dtag data found.');
-    }
-    return dtags
+        rows.forEach(row => dtags[row[0].trim()] = row[1]);
+    } else { console.log('No dtag data found.'); }
+    return dtags;
 }
 
 /**
@@ -252,10 +251,11 @@ async function updateSheets(auth, rows) {
         range: 'Current!L3:L',
         valueInputOption: 'USER_ENTERED',
         // valueRenderOption: 'FORMATTED_VALUE',
-        resource: {
+        resource: { 
             values: announces,
         }
     }).catch(err => { throw err });
+    return ;
 }
 
 /**
@@ -284,10 +284,9 @@ async function authorize(credentials, callback) {
             console.log(msg);
             throw msg;
         });
-    console.log("-------- calling authorized function: ", callback.name, " --------");
+    console.log("calling authorized function: ", callback.name);
     const callbackPromise = callback(oAuth2Client);
-    console.log("-------- completed authorized function: ", callback.name, " --------");
-    return new Promise(resolve => resolve(await callbackPromise));
+    return callbackPromise;
 }
 
 /**
@@ -319,12 +318,11 @@ function genConfMsg(confirms, dtags, guild_members) {
     let messages = [];
     const get_member = dtag => guild_members.cache.find(member => member.user.tag.toLowerCase() == dtag.toLowerCase());
     confirms.forEach(shift => {
-        let date = shift[COLS['date']].concat(" ", shift[COLS['time']]);
-        let dtag = dtags[shift[COLS["approval"]]] ? dtags[shift[COLS["approval"]]] : shift[COLS["approval"]];
-        dtag = dtag ? get_member(dtag) : dtags[shift[COLS["approval"]]];
-        dtag = dtag ? dtag : shift[COLS["approval"]];
-        let msg = `${dtag} you are confirmed for ${shift[COLS["name"]]} at ${shift[COLS["location"]]} `+
-        `on ${date} with ${shift[COLS["R1"]]} and ${shift[COLS["R2"]]}!`;
+        const date = shift[COLS['date']].concat(" ", shift[COLS['time']]);
+        const name = shift[COLS["approval"]].trim();
+        const dtag = (dtags[name] && get_member(dtags[name])) ? get_member(dtags[name]) : name;
+        let msg = `${dtag}, you are confirmed for ${shift[COLS["name"]]} at ${shift[COLS["location"]]} `+
+        `on ${date} with ${shift[COLS["R1"]]}!`;
         messages.push(msg);
     });
     return messages;
