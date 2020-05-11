@@ -22,6 +22,7 @@ const readline = require('readline');
 const live_mode = false;
 const time_check = false;
 const day_check = false;
+const real_time = false;
 const send_msgs = false;
 const modify_sheets = false;
 
@@ -37,14 +38,15 @@ const TOKEN_PATH = 'token.json';
 // /AWS Lambda trigger handler
 exports.handler = async (event, content) => {
     // instance context
-    let first_date = time_check ? moment().add(7, 'day').startOf('date') : first_test_date;
-    let last_date = time_check ? moment().add(13, 'day').startOf('date') : last_test_date;
+    const first_date = real_time ? moment().add(7, 'day').startOf('date') : first_test_date;
+    const last_date = real_time ? moment().add(13, 'day').startOf('date') : last_test_date;
     const context = {
         start : first_date,
         end : last_date,
         live_mode : live_mode,
         time_check : time_check,
         day_check : day_check,
+        real_time : real_time,
         send_msgs : send_msgs,
         modify_sheets : modify_sheets,
     };
@@ -109,11 +111,11 @@ exports.handler = async (event, content) => {
         await client.destroy();
         throw `${auth.server} server not found`;
     }
-    const channelName = live_mode ? 'third-riders' : 'test-bot';
+    const channelName = live_mode ? auth.channel : auth.bot_channel;
     const r3_channel = guild.channels.cache.find(ch => ch.name == channelName);
     if (!r3_channel) {
         await client.destroy();
-        throw `${ch} channel not found`;
+        throw `${channelName} channel not found`;
     }
 
     // generate messages
@@ -142,12 +144,8 @@ exports.handler = async (event, content) => {
                 await Promise.all(message_promises);
             }
             console.log("Shifts sent");
-        } else {
-            console.log("Date check failed, no shifts sent");
-        }
-    } else {
-        console.log("Not sending messages");
-    }
+        } else { console.log("Date check failed, no shifts sent"); }
+    } else { console.log("Not sending messages"); }
 
     // update sheets with announced confirmations
     if (modify_sheets) {
@@ -244,7 +242,7 @@ async function getDTags(auth) {
  * @param {google.auth.OAuth2} auth The authenticated Google OAuth client.
  * @param {list} rows 2D list containing the entire updated spreadsheet
  */
-function updateSheets(auth, rows) {
+async function updateSheets(auth, rows) {
     // Get just the "announced" column
     // rows = Array.prototype.slice.call(rows);
     const announces = rows.map(row => [row[COLS["announced"]]])
@@ -267,7 +265,6 @@ function updateSheets(auth, rows) {
  * fix 'token.json'
  * @param {Object} credentials The authorization client credentials.
  * @param {function} callback The callback to call with the authorized client.
- *                   The callback should return a promise
  * @return {see callback} returns result of resolved callback promise
  */
 async function authorize(credentials, callback) {
@@ -288,9 +285,9 @@ async function authorize(credentials, callback) {
             throw msg;
         });
     console.log("-------- calling authorized function: ", callback.name, " --------");
-    result = await callback(oAuth2Client);
+    const callbackPromise = callback(oAuth2Client);
     console.log("-------- completed authorized function: ", callback.name, " --------");
-    return result;
+    return new Promise(resolve => resolve(await callbackPromise));
 }
 
 /**
