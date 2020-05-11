@@ -16,12 +16,10 @@ const readline = require('readline');
 // Switches app functionality
 // live mode false: sends to bot-test channel
 // real_time false: utilizes custom time
-// time_check false: forces shift confirmation processing (ie. not just 6:30pm est)
 // day_check false: forces new shift announcements processing (ie. not just on Sundays) 
 // send_msgs false: prevents message sending
 // modify_sheets false: prevents modification of google sheet
 const live_mode = false;
-const real_time = false;
 const time_check = false;
 const day_check = false;
 const send_msgs = false;
@@ -39,13 +37,12 @@ const TOKEN_PATH = 'token.json';
 // /AWS Lambda trigger handler
 exports.handler = async (event, content) => {
     // instance context
-    let first_date = real_time ? moment().add(7, 'day').startOf('date') : first_test_date;
-    let last_date = real_time ? moment().add(13, 'day').startOf('date') : last_test_date;
+    let first_date = time_check ? moment().add(7, 'day').startOf('date') : first_test_date;
+    let last_date = time_check ? moment().add(13, 'day').startOf('date') : last_test_date;
     const context = {
         start : first_date,
         end : last_date,
         live_mode : live_mode,
-        real_time : real_time,
         time_check : time_check,
         day_check : day_check,
         send_msgs : send_msgs,
