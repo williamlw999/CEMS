@@ -299,7 +299,7 @@ function genShiftMsg(shifts, context) {
 
     shifts.forEach(shift => {
         let date = shift[COLS['date']].concat(" ", shift[COLS['time']]);
-        let msg = `**Name:** ${shift[COLS['name']]}    **Date:** ${date}    **Location:** ${shift[COLS['location']]}`;
+        let msg = `**Date:** ${date}    **Name:** ${shift[COLS['name']]}    **Location:** ${shift[COLS['location']]}`;
         messages.push(msg);
     });
     return messages;
