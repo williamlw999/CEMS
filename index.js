@@ -29,6 +29,8 @@ const modify_sheets = false;
 const first_test_date = moment("9/5/2019", "MM/DD/YYYY");
 const last_test_date = moment("9/21/2019", "MM/DD/YYYY");
 
+const no_shifts = "All shifts next week have been assigned!";
+
 // The file token.json stores the user's access and refresh tokens, and is
 // created automatically when the authorization flow completes for the first time.
 // If broken, troubleshoot with `token_fix.js`
@@ -139,13 +141,8 @@ exports.handler = async (event, content) => {
 
         // announce new shifts
         if (!day_check || status["correct_day"]) {
-            await r3_channel.send(shift_msgs.shift());
-            if (!shift_msgs.length) {
-                await r3_channel.send("All shifts next week have been assigned!");
-            } else {
-                const message_promises = shift_msgs.map(message => r3_channel.send(message));
-                await Promise.all(message_promises);
-            }
+            if (shift_msgs.length == 1) { shift_msgs.push(no_shifts); }
+            await r3_channel.send(shift_msgs.shift() + shift_msgs.join('\n'));
             console.log("Shifts sent");
         } else { console.log("Date check failed, no shifts sent"); }
     } else { console.log("Not sending messages"); }
