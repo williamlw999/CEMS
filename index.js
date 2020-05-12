@@ -58,8 +58,8 @@ exports.handler = async (event, content) => {
     const now = moment.tz('America/New_York');
     let status = {
         et_timestamp : now.format(),
-        correct_time : now.hours() == 18 && now.minutes() == 29,
-        correct_day : now.weekday() == 1, // CHANGE BACK TO 0 AFTER TEST
+        correct_time : now.hours() == 18,
+        correct_day : now.weekday() == 0,
         confirms : [],
         shifts : [],
         confirms_msgs : [],
